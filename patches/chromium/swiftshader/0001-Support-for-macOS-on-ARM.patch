@@ -1,0 +1,51 @@
+From 3da051b951907aec9ddeca5c10b5e1fde8d2f598 Mon Sep 17 00:00:00 2001
+From: Zhuowei Zhang <zhuoweizhang@yahoo.com>
+Date: Sun, 14 Jun 2020 23:18:51 -0400
+Subject: [PATCH] Support for macOS on ARM
+
+---
+ .../llvm-7.0/configs/darwin/include/llvm/Config/config.h    | 3 +++
+ .../configs/darwin/include/llvm/Config/llvm-config.h        | 6 ++++++
+ 2 files changed, 9 insertions(+)
+
+diff --git a/third_party/llvm-7.0/configs/darwin/include/llvm/Config/config.h b/third_party/llvm-7.0/configs/darwin/include/llvm/Config/config.h
+index 28c909802..900077336 100644
+--- a/third_party/llvm-7.0/configs/darwin/include/llvm/Config/config.h
++++ b/third_party/llvm-7.0/configs/darwin/include/llvm/Config/config.h
+@@ -293,6 +293,9 @@
+ /* Doesn't use `cmakedefine` because it is allowed to be empty. */
+ #if defined(__x86_64__)
+ #define LLVM_DEFAULT_TARGET_TRIPLE "x86_64-apple-darwin"
++#elif defined(__aarch64__)
++// TODO(zhuowei): fix this
++#define LLVM_DEFAULT_TARGET_TRIPLE "aarch64-apple-darwin"
+ #else
+ #error "unknown architecture"
+ #endif
+diff --git a/third_party/llvm-7.0/configs/darwin/include/llvm/Config/llvm-config.h b/third_party/llvm-7.0/configs/darwin/include/llvm/Config/llvm-config.h
+index 54d348b57..e5a350d77 100644
+--- a/third_party/llvm-7.0/configs/darwin/include/llvm/Config/llvm-config.h
++++ b/third_party/llvm-7.0/configs/darwin/include/llvm/Config/llvm-config.h
+@@ -23,6 +23,9 @@
+ /* Target triple LLVM will generate code for by default */
+ #if defined(__x86_64__)
+ #define LLVM_DEFAULT_TARGET_TRIPLE "x86_64-apple-darwin"
++#elif defined(__aarch64__)
++// TODO(zhuowei): not sure how this is supposedd to be set?
++#define LLVM_DEFAULT_TARGET_TRIPLE "aarch64-apple-darwin"
+ #else
+ #error "unknown architecture"
+ #endif
+@@ -36,6 +39,9 @@
+ /* Host triple LLVM will be executed on */
+ #if defined(__x86_64__)
+ #define LLVM_HOST_TRIPLE "x86_64-apple-darwin"
++#elif defined(__aarch64__)
++// TODO(zhuowei): not sure how this is supposedd to be set?
++#define LLVM_HOST_TRIPLE "aarch64-apple-darwin"
+ #else
+ #error "unknown architecture"
+ #endif
+-- 
+2.21.0 (Apple Git-122)
+

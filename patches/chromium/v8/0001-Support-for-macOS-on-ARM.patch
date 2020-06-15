@@ -1,0 +1,33 @@
+From 0e75d0e6568022ccbb5d7642038e42bd64882acc Mon Sep 17 00:00:00 2001
+From: Zhuowei Zhang <zhuoweizhang@yahoo.com>
+Date: Sun, 14 Jun 2020 23:17:00 -0400
+Subject: [PATCH] Support for macOS on ARM
+
+---
+ src/libsampler/sampler.cc | 10 +++++++++-
+ 1 file changed, 9 insertions(+), 1 deletion(-)
+
+diff --git a/src/libsampler/sampler.cc b/src/libsampler/sampler.cc
+index e2091ceb32..1eaa689168 100644
+--- a/src/libsampler/sampler.cc
++++ b/src/libsampler/sampler.cc
+@@ -468,7 +468,15 @@ void SignalHandler::FillRegisterState(void* context, RegisterState* state) {
+   state->pc = reinterpret_cast<void*>(mcontext->__ss.__eip);
+   state->sp = reinterpret_cast<void*>(mcontext->__ss.__esp);
+   state->fp = reinterpret_cast<void*>(mcontext->__ss.__ebp);
+-#endif  // V8_HOST_ARCH_IA32
++#elif V8_TARGET_ARCH_ARM64
++  // TODO(zhuowei): copied from iOS above. Won't work on arm64e.
++  state->pc = reinterpret_cast<void*>(mcontext->__ss.__pc);
++  state->sp = reinterpret_cast<void*>(mcontext->__ss.__sp);
++  state->fp = reinterpret_cast<void*>(mcontext->__ss.__fp);
++#else
++#error Unexpected macOS target architecture.
++#endif  // V8_HOST_ARCH_ARM64
++
+ #elif V8_OS_FREEBSD
+ #if V8_HOST_ARCH_IA32
+   state->pc = reinterpret_cast<void*>(mcontext.mc_eip);
+-- 
+2.21.0 (Apple Git-122)
+

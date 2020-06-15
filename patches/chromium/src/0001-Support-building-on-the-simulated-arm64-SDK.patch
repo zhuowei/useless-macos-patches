@@ -1,0 +1,631 @@
+From f90f31f9ea68425dd937faa723796a9a04fcdbb5 Mon Sep 17 00:00:00 2001
+From: Zhuowei Zhang <zhuoweizhang@yahoo.com>
+Date: Sun, 14 Jun 2020 20:37:41 -0400
+Subject: [PATCH] Support building on the simulated arm64 SDK
+
+---
+ base/mac/call_with_eh_frame.cc                |  3 +-
+ base/mac/call_with_eh_frame_asm.S             |  5 ++
+ base/process/process_metrics_mac.cc           |  3 ++
+ base/profiler/native_unwinder_mac.cc          | 14 ++++++
+ base/profiler/register_context.h              | 22 ++++++++-
+ .../suspendable_thread_delegate_mac.cc        | 48 ++++++++++++++++++-
+ .../suspendable_thread_delegate_mac.h         | 13 +++++
+ build/config/BUILDCONFIG.gn                   |  5 +-
+ build/config/mac/BUILD.gn                     |  5 ++
+ build/config/mac/mac_sdk.gni                  |  6 +++
+ build/toolchain/mac/BUILD.gn                  |  8 ++++
+ .../audio/mac/coreaudio_dispatch_override.cc  |  5 ++
+ sandbox/mac/sandbox_logging.cc                | 11 +++++
+ .../crashpad/client/simulate_crash_mac.cc     |  6 +++
+ .../snapshot/mac/exception_snapshot_mac.cc    |  5 ++
+ .../snapshot/mac/exception_snapshot_mac.h     |  6 +++
+ .../snapshot/mac/process_reader_mac.cc        | 16 +++++++
+ .../snapshot/mac/process_reader_mac.h         | 11 +++++
+ .../snapshot/mac/system_snapshot_mac.cc       |  9 ++++
+ .../snapshot/mac/thread_snapshot_mac.cc       |  6 +++
+ .../snapshot/mac/thread_snapshot_mac.h        |  6 +++
+ .../crashpad/util/net/http_transport_mac.mm   |  3 ++
+ third_party/zlib/BUILD.gn                     |  3 +-
+ third_party/zlib/cpu_features.c               |  6 ++-
+ 24 files changed, 217 insertions(+), 8 deletions(-)
+
+diff --git a/base/mac/call_with_eh_frame.cc b/base/mac/call_with_eh_frame.cc
+index 457854141940..5a680f11d210 100644
+--- a/base/mac/call_with_eh_frame.cc
++++ b/base/mac/call_with_eh_frame.cc
+@@ -12,8 +12,9 @@
+ namespace base {
+ namespace mac {
+ 
+-#if defined(OS_IOS)
++#if defined(OS_IOS) || defined(__arm64__)
+ // No iOS assembly implementation exists, so just call the block directly.
++// TODO(zhuowei): no macOS arm64 implementation exists, either. Yet.
+ void CallWithEHFrame(void (^block)(void)) {
+   block();
+ }
+diff --git a/base/mac/call_with_eh_frame_asm.S b/base/mac/call_with_eh_frame_asm.S
+index 0e399cf2ae0b..be6fe3cbf21b 100644
+--- a/base/mac/call_with_eh_frame_asm.S
++++ b/base/mac/call_with_eh_frame_asm.S
+@@ -2,6 +2,9 @@
+ // Use of this source code is governed by a BSD-style license that can be
+ // found in the LICENSE file.
+ 
++// TODO(zhuowei): do this properly
++#ifndef __arm64__
++
+ // base::mac::CallWithEHFrame(void () block_pointer)
+ #define CALL_WITH_EH_FRAME __ZN4base3mac15CallWithEHFrameEU13block_pointerFvvE
+ 
+@@ -87,3 +90,5 @@ CS2_end = Lfunction_end - Ltry_end
+   .byte 0  // No further action to take.
+   .long 0  // No type filter for this catch(){} clause.
+   .align 2
++
++#endif // __arm64__ 
+diff --git a/base/process/process_metrics_mac.cc b/base/process/process_metrics_mac.cc
+index d0f35471cb79..cabd00885b15 100644
+--- a/base/process/process_metrics_mac.cc
++++ b/base/process/process_metrics_mac.cc
+@@ -295,7 +295,10 @@ bool GetSystemMemoryInfo(SystemMemoryInfoKB* meminfo) {
+   }
+   DCHECK_EQ(HOST_VM_INFO64_COUNT, count);
+ 
++#ifndef __arm64__
++  // TODO(zhuowei): PAGE_SIZE is not a constant on ARM64
+   static_assert(PAGE_SIZE % 1024 == 0, "Invalid page size");
++#endif
+   meminfo->free = saturated_cast<int>(
+       PAGE_SIZE / 1024 * (vm_info.free_count - vm_info.speculative_count));
+   meminfo->speculative =
+diff --git a/base/profiler/native_unwinder_mac.cc b/base/profiler/native_unwinder_mac.cc
+index 51717e1b5f23..fc2b0a9bb111 100644
+--- a/base/profiler/native_unwinder_mac.cc
++++ b/base/profiler/native_unwinder_mac.cc
+@@ -135,6 +135,7 @@ bool NativeUnwinderMac::CanUnwindFrom(const Frame& current_frame) const {
+   return current_frame.module && current_frame.module->IsNative();
+ }
+ 
++#if defined(__x86_64__)
+ UnwindResult NativeUnwinderMac::TryUnwind(x86_thread_state64_t* thread_context,
+                                           uintptr_t stack_top,
+                                           ModuleCache* module_cache,
+@@ -201,6 +202,19 @@ UnwindResult NativeUnwinderMac::TryUnwind(x86_thread_state64_t* thread_context,
+   NOTREACHED();
+   return UnwindResult::COMPLETED;
+ }
++#elif defined(__arm64__)
++UnwindResult NativeUnwinderMac::TryUnwind(arm_thread_state64_t* thread_context,
++                                          uintptr_t stack_top,
++                                          ModuleCache* module_cache,
++                                          std::vector<Frame>* stack) const {
++  // TODO(zhuowei): implement
++  if (stack->back().module && MayTriggerUnwInitLocalCrash(stack->back().module))
++    return UnwindResult::ABORTED;
++  return UnwindResult::ABORTED;
++}
++#else
++#error Unsupported architecture
++#endif
+ 
+ // Checks preconditions for attempting an unwind. If any conditions fail,
+ // returns corresponding UnwindResult. Otherwise returns nullopt.
+diff --git a/base/profiler/register_context.h b/base/profiler/register_context.h
+index 14380a527848..e49f3933f17b 100644
+--- a/base/profiler/register_context.h
++++ b/base/profiler/register_context.h
+@@ -69,7 +69,7 @@ inline uintptr_t& RegisterContextInstructionPointer(::CONTEXT* context) {
+ #endif
+ }
+ 
+-#elif defined(OS_MACOSX) && !defined(OS_IOS)  // #if defined(OS_WIN)
++#elif defined(OS_MACOSX) && !defined(OS_IOS) && !defined(__arm64__)  // #if defined(OS_WIN)
+ 
+ using RegisterContext = x86_thread_state64_t;
+ 
+@@ -86,6 +86,26 @@ inline uintptr_t& RegisterContextInstructionPointer(
+   return AsUintPtr(&context->__rip);
+ }
+ 
++#elif defined(OS_MACOSX) && !defined(OS_IOS) && defined(__arm64__)
++
++// TODO(zhuowei): verify
++
++using RegisterContext = arm_thread_state64_t;
++
++inline uintptr_t& RegisterContextStackPointer(arm_thread_state64_t* context) {
++  return AsUintPtr(&context->__sp);
++}
++
++inline uintptr_t& RegisterContextFramePointer(arm_thread_state64_t* context) {
++  return AsUintPtr(&context->__fp);
++}
++
++inline uintptr_t& RegisterContextInstructionPointer(
++    arm_thread_state64_t* context) {
++  return AsUintPtr(&context->__pc);
++}
++
++
+ #elif defined(OS_ANDROID) || defined(OS_LINUX)  // #if defined(OS_WIN)
+ 
+ using RegisterContext = mcontext_t;
+diff --git a/base/profiler/suspendable_thread_delegate_mac.cc b/base/profiler/suspendable_thread_delegate_mac.cc
+index a31a0caf2b15..81c9919a3438 100644
+--- a/base/profiler/suspendable_thread_delegate_mac.cc
++++ b/base/profiler/suspendable_thread_delegate_mac.cc
+@@ -22,7 +22,7 @@
+ namespace base {
+ 
+ namespace {
+-
++#if defined(__x86_64__)
+ // Fills |state| with |target_thread|'s context. NO HEAP ALLOCATIONS.
+ bool GetThreadState(thread_act_t target_thread, x86_thread_state64_t* state) {
+   auto count = static_cast<mach_msg_type_number_t>(x86_THREAD_STATE64_COUNT);
+@@ -30,6 +30,18 @@ bool GetThreadState(thread_act_t target_thread, x86_thread_state64_t* state) {
+                           reinterpret_cast<thread_state_t>(state),
+                           &count) == KERN_SUCCESS;
+ }
++#elif defined(__arm64__)
++// TODO(zhuowei): does this work?
++// Fills |state| with |target_thread|'s context. NO HEAP ALLOCATIONS.
++bool GetThreadState(thread_act_t target_thread, arm_thread_state64_t* state) {
++  auto count = static_cast<mach_msg_type_number_t>(ARM_THREAD_STATE64_COUNT);
++  return thread_get_state(target_thread, ARM_THREAD_STATE64,
++                          reinterpret_cast<thread_state_t>(state),
++                          &count) == KERN_SUCCESS;
++}
++#else
++#error Unknown architecture
++#endif
+ 
+ }  // namespace
+ 
+@@ -68,7 +80,13 @@ SuspendableThreadDelegateMac::SuspendableThreadDelegateMac(
+   // Therefore, for all the system functions that might be linked in dynamically
+   // that are used while threads are suspended, make calls to them to make sure
+   // that they are linked up.
++#if defined(__x86_64__)
+   x86_thread_state64_t thread_state;
++#elif defined(__arm64__)
++  arm_thread_state64_t thread_state;
++#else
++#error Unknown architecture
++#endif
+   GetThreadState(thread_port_, &thread_state);
+ }
+ 
+@@ -82,12 +100,21 @@ SuspendableThreadDelegateMac::CreateScopedSuspendThread() {
+ PlatformThreadId SuspendableThreadDelegateMac::GetThreadId() const {
+   return thread_port_;
+ }
+-
++#if defined(__x86_64__)
+ // NO HEAP ALLOCATIONS.
+ bool SuspendableThreadDelegateMac::GetThreadContext(
+     x86_thread_state64_t* thread_context) {
+   return GetThreadState(thread_port_, thread_context);
+ }
++#elif defined(__arm64__)
++// NO HEAP ALLOCATIONS.
++bool SuspendableThreadDelegateMac::GetThreadContext(
++    arm_thread_state64_t* thread_context) {
++  return GetThreadState(thread_port_, thread_context);
++}
++#else
++#error Unknown architecture
++#endif
+ 
+ // NO HEAP ALLOCATIONS.
+ uintptr_t SuspendableThreadDelegateMac::GetStackBaseAddress() const {
+@@ -99,6 +126,7 @@ bool SuspendableThreadDelegateMac::CanCopyStack(uintptr_t stack_pointer) {
+   return true;
+ }
+ 
++#if defined(__x86_64__)
+ std::vector<uintptr_t*> SuspendableThreadDelegateMac::GetRegistersToRewrite(
+     x86_thread_state64_t* thread_context) {
+   return {
+@@ -107,5 +135,21 @@ std::vector<uintptr_t*> SuspendableThreadDelegateMac::GetRegistersToRewrite(
+       &AsUintPtr(&thread_context->__r13), &AsUintPtr(&thread_context->__r14),
+       &AsUintPtr(&thread_context->__r15)};
+ }
++#elif defined(__arm64__)
++std::vector<uintptr_t*> SuspendableThreadDelegateMac::GetRegistersToRewrite(
++    arm_thread_state64_t* thread_context) {
++  // TODO(zhuowei): this is copied from the Windows file - it should use the same ABI though
++  return {
++      &AsUintPtr(&thread_context->__x[19]), &AsUintPtr(&thread_context->__x[20]),
++      &AsUintPtr(&thread_context->__x[21]), &AsUintPtr(&thread_context->__x[22]),
++      &AsUintPtr(&thread_context->__x[23]), &AsUintPtr(&thread_context->__x[24]),
++      &AsUintPtr(&thread_context->__x[25]), &AsUintPtr(&thread_context->__x[26]),
++      &AsUintPtr(&thread_context->__x[27]), &AsUintPtr(&thread_context->__x[28]),
++      &AsUintPtr(&thread_context->__fp), &AsUintPtr(&thread_context->__lr),
++      &AsUintPtr(&thread_context->__sp)};
++}
++#else
++#error Unknown architecture
++#endif
+ 
+ }  // namespace base
+diff --git a/base/profiler/suspendable_thread_delegate_mac.h b/base/profiler/suspendable_thread_delegate_mac.h
+index f6eee8fe1434..e114c4670e82 100644
+--- a/base/profiler/suspendable_thread_delegate_mac.h
++++ b/base/profiler/suspendable_thread_delegate_mac.h
+@@ -46,12 +46,25 @@ class BASE_EXPORT SuspendableThreadDelegateMac
+   // SuspendableThreadDelegate
+   std::unique_ptr<SuspendableThreadDelegate::ScopedSuspendThread>
+   CreateScopedSuspendThread() override;
++#if defined(__x86_64__)
+   bool GetThreadContext(x86_thread_state64_t* thread_context) override;
++#elif defined(__arm64__)
++  bool GetThreadContext(arm_thread_state64_t* thread_context) override;
++#else
++#error Unknown architecture
++#endif
+   PlatformThreadId GetThreadId() const override;
+   uintptr_t GetStackBaseAddress() const override;
+   bool CanCopyStack(uintptr_t stack_pointer) override;
++#if defined(__x86_64__)
+   std::vector<uintptr_t*> GetRegistersToRewrite(
+       x86_thread_state64_t* thread_context) override;
++#elif defined(__arm64__)
++  std::vector<uintptr_t*> GetRegistersToRewrite(
++      arm_thread_state64_t* thread_context) override;
++#else
++#error Unknown architecture
++#endif
+ 
+  private:
+   // Weak reference: Mach port for thread being profiled.
+diff --git a/build/config/BUILDCONFIG.gn b/build/config/BUILDCONFIG.gn
+index 33416d571f2d..8ac3e35e7f2f 100644
+--- a/build/config/BUILDCONFIG.gn
++++ b/build/config/BUILDCONFIG.gn
+@@ -236,8 +236,9 @@ if (target_os == "android") {
+ } else if (target_os == "ios") {
+   _default_toolchain = "//build/toolchain/mac:ios_clang_$target_cpu"
+ } else if (target_os == "mac") {
+-  assert(host_os == "mac", "Mac cross-compiles are unsupported.")
+-  _default_toolchain = host_toolchain
++  # TODO(zhuowei): do this properly
++  assert(host_os == "mac", "Mac cross-compiles are only supported on Mac hosts.")
++  _default_toolchain = "//build/toolchain/mac:clang_$target_cpu"
+ } else if (target_os == "win") {
+   # On Windows, we use the same toolchain for host and target by default.
+   # Beware, win cross builds have some caveats, see docs/win_cross.md
+diff --git a/build/config/mac/BUILD.gn b/build/config/mac/BUILD.gn
+index de8233bba4a1..40869331db09 100644
+--- a/build/config/mac/BUILD.gn
++++ b/build/config/mac/BUILD.gn
+@@ -24,6 +24,11 @@ config("compiler") {
+       "-arch",
+       "i386",
+     ]
++  } else if (current_cpu == "arm64") {
++    common_mac_flags += [
++      "-arch",
++      "arm64",
++    ]
+   }
+ 
+   # This is here so that all files get recompiled after an Xcode update.
+diff --git a/build/config/mac/mac_sdk.gni b/build/config/mac/mac_sdk.gni
+index c43c00ddaf02..d8577558dcfb 100644
+--- a/build/config/mac/mac_sdk.gni
++++ b/build/config/mac/mac_sdk.gni
+@@ -123,3 +123,9 @@ if (use_system_xcode) {
+   # TODO(thakis): Do this at the uses of this variable instead.
+   mac_bin_path = rebase_path(mac_bin_path, root_build_dir)
+ }
++
++if (current_cpu == "x64") {
++  # TODO(zhuowei): kludge: always use the stock macOS sdk for host builds
++  # This won't be needed with a real macOS ARM SDK.
++  mac_sdk_path = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
++} 
+diff --git a/build/toolchain/mac/BUILD.gn b/build/toolchain/mac/BUILD.gn
+index add57c71bbe3..1236c0178190 100644
+--- a/build/toolchain/mac/BUILD.gn
++++ b/build/toolchain/mac/BUILD.gn
+@@ -542,6 +542,14 @@ mac_toolchain("clang_x64_v8_mips64el") {
+   }
+ }
+ 
++# TODO(zhuowei): do this properly
++mac_toolchain("clang_arm64") {
++  toolchain_args = {
++    current_cpu = "arm64"
++    current_os = "mac"
++  }
++}
++
+ if (is_ios) {
+   mac_toolchain("ios_clang_arm") {
+     toolchain_args = {
+diff --git a/media/audio/mac/coreaudio_dispatch_override.cc b/media/audio/mac/coreaudio_dispatch_override.cc
+index 68a9618819c5..d105b5ab08ad 100644
+--- a/media/audio/mac/coreaudio_dispatch_override.cc
++++ b/media/audio/mac/coreaudio_dispatch_override.cc
+@@ -127,9 +127,14 @@ bool AddressIsPauseOrResume(intptr_t address) {
+ 
+ dispatch_queue_t GetGlobalQueueOverride(long identifier, unsigned long flags) {
+   // Get the return address.
++#if defined(__x86_64__)
+   const intptr_t* rbp = 0;
+   asm("movq %%rbp, %0;" : "=r"(rbp));
+   const intptr_t caller = rbp[1];
++#else
++  // TODO(zhuowei): does this work?
++  const intptr_t caller = reinterpret_cast<intptr_t>(__builtin_return_address(0));
++#endif
+ 
+   // Check if it's one we should override.
+   if (identifier == DISPATCH_QUEUE_PRIORITY_HIGH &&
+diff --git a/sandbox/mac/sandbox_logging.cc b/sandbox/mac/sandbox_logging.cc
+index 4eebcea13d17..8b6f26e6b92b 100644
+--- a/sandbox/mac/sandbox_logging.cc
++++ b/sandbox/mac/sandbox_logging.cc
+@@ -15,12 +15,23 @@
+ #include <limits>
+ #include <string>
+ 
++#if defined(__i386__) || defined(__x86_64__)
+ #define ABORT()                                                                \
+   {                                                                            \
+     asm volatile(                                                              \
+         "int3; ud2; push %0;" ::"i"(static_cast<unsigned char>(__COUNTER__))); \
+     __builtin_unreachable();                                                   \
+   }
++#elif defined(__arm64__)
++// TODO(zhuowei): fix this!
++#define ABORT()                                                                \
++  {                                                                            \
++    abort();                                                                   \
++    __builtin_unreachable();                                                   \
++  }
++#else
++#error Unknown architecture
++#endif
+ 
+ extern "C" {
+ void abort_report_np(const char*, ...);
+diff --git a/third_party/crashpad/crashpad/client/simulate_crash_mac.cc b/third_party/crashpad/crashpad/client/simulate_crash_mac.cc
+index 43d05b815598..c3cebb90f0b5 100644
+--- a/third_party/crashpad/crashpad/client/simulate_crash_mac.cc
++++ b/third_party/crashpad/crashpad/client/simulate_crash_mac.cc
+@@ -94,6 +94,12 @@ bool DeliverException(thread_t thread,
+       state_count = cpu_context.tsh.count;
+       break;
+ #endif
++#elif defined(__arm64__)
++// TODO(zhuowei) implement
++    case ARM_THREAD_STATE64:
++      state = reinterpret_cast<ConstThreadState>(&cpu_context.ts_64);
++      state_count = cpu_context.ash.count;
++      break;
+ #else
+ #error Port to your CPU architecture
+ #endif
+diff --git a/third_party/crashpad/crashpad/snapshot/mac/exception_snapshot_mac.cc b/third_party/crashpad/crashpad/snapshot/mac/exception_snapshot_mac.cc
+index 8eefac9f3914..38ab263f7528 100644
+--- a/third_party/crashpad/crashpad/snapshot/mac/exception_snapshot_mac.cc
++++ b/third_party/crashpad/crashpad/snapshot/mac/exception_snapshot_mac.cc
+@@ -187,6 +187,11 @@ bool ExceptionSnapshotMac::Initialize(ProcessReaderMac* process_reader,
+        exception_code_0_ == (VM_PROT_READ | VM_PROT_EXECUTE))) {
+     code_1_is_exception_address = false;
+   }
++#elif defined(__arm64__)
++  // TODO(zhuowei): implement this. This just gets rid of the unused variable compiler error
++  context_.arm64 = &context_union_.arm64;
++#else
++#error Unsupported architecture
+ #endif
+ 
+   if (code_1_is_exception_address) {
+diff --git a/third_party/crashpad/crashpad/snapshot/mac/exception_snapshot_mac.h b/third_party/crashpad/crashpad/snapshot/mac/exception_snapshot_mac.h
+index 52ef519b44d9..ee3c6250f155 100644
+--- a/third_party/crashpad/crashpad/snapshot/mac/exception_snapshot_mac.h
++++ b/third_party/crashpad/crashpad/snapshot/mac/exception_snapshot_mac.h
+@@ -84,6 +84,12 @@ class ExceptionSnapshotMac final : public ExceptionSnapshot {
+     CPUContextX86 x86;
+     CPUContextX86_64 x86_64;
+   } context_union_;
++#elif defined(__arm64__)
++  union {
++    CPUContextARM64 arm64;
++  } context_union_;
++#else
++#error Unsupported architecture
+ #endif
+   CPUContext context_;
+   std::vector<uint64_t> codes_;
+diff --git a/third_party/crashpad/crashpad/snapshot/mac/process_reader_mac.cc b/third_party/crashpad/crashpad/snapshot/mac/process_reader_mac.cc
+index 61dc3a1f3ae7..65c3432760db 100644
+--- a/third_party/crashpad/crashpad/snapshot/mac/process_reader_mac.cc
++++ b/third_party/crashpad/crashpad/snapshot/mac/process_reader_mac.cc
+@@ -280,6 +280,18 @@ void ProcessReaderMac::InitializeThreads() {
+         Is64Bit() ? x86_DEBUG_STATE64 : x86_DEBUG_STATE32;
+     mach_msg_type_number_t debug_state_count =
+         Is64Bit() ? x86_DEBUG_STATE64_COUNT : x86_DEBUG_STATE32_COUNT;
++#elif defined(__arm64__)
++    // TODO(zhuowei) verify
++    const thread_state_flavor_t kThreadStateFlavor = ARM_THREAD_STATE64;
++    mach_msg_type_number_t thread_state_count = ARM_THREAD_STATE64_COUNT;
++
++    const thread_state_flavor_t kFloatStateFlavor = ARM_NEON_STATE64;
++    mach_msg_type_number_t float_state_count = ARM_NEON_STATE64_COUNT;
++
++    const thread_state_flavor_t kDebugStateFlavor = ARM_DEBUG_STATE64;
++    mach_msg_type_number_t debug_state_count = ARM_DEBUG_STATE64_COUNT;
++#else
++#error Unsupported architecture
+ #endif
+ 
+     kr = thread_get_state(
+@@ -366,6 +378,10 @@ void ProcessReaderMac::InitializeThreads() {
+     mach_vm_address_t stack_pointer = Is64Bit()
+                                           ? thread.thread_context.t64.__rsp
+                                           : thread.thread_context.t32.__esp;
++#elif defined(__arm64__)
++    mach_vm_address_t stack_pointer = thread.thread_context.t64.__sp;
++#else
++#error Unsupported architecture
+ #endif
+ 
+     thread.stack_region_address =
+diff --git a/third_party/crashpad/crashpad/snapshot/mac/process_reader_mac.h b/third_party/crashpad/crashpad/snapshot/mac/process_reader_mac.h
+index 9feb8b071fa5..a33eb3735347 100644
+--- a/third_party/crashpad/crashpad/snapshot/mac/process_reader_mac.h
++++ b/third_party/crashpad/crashpad/snapshot/mac/process_reader_mac.h
+@@ -55,6 +55,17 @@ class ProcessReaderMac {
+       x86_debug_state64_t d64;
+       x86_debug_state32_t d32;
+     };
++#elif defined(__arm64__)
++// TODO(zhuowei): these aren't actually read yet
++    union ThreadContext {
++      arm_thread_state64_t t64;
++    };
++    union FloatContext {
++      arm_neon_state64_t f64;
++    };
++    union DebugContext {
++      arm_debug_state64_t d64;
++    };
+ #endif
+ 
+     Thread();
+diff --git a/third_party/crashpad/crashpad/snapshot/mac/system_snapshot_mac.cc b/third_party/crashpad/crashpad/snapshot/mac/system_snapshot_mac.cc
+index 5410be085ea8..970ba09c01ea 100644
+--- a/third_party/crashpad/crashpad/snapshot/mac/system_snapshot_mac.cc
++++ b/third_party/crashpad/crashpad/snapshot/mac/system_snapshot_mac.cc
+@@ -157,6 +157,8 @@ CPUArchitecture SystemSnapshotMac::GetCPUArchitecture() const {
+ #if defined(ARCH_CPU_X86_FAMILY)
+   return process_reader_->Is64Bit() ? kCPUArchitectureX86_64
+                                     : kCPUArchitectureX86;
++#elif defined(__arm64__)
++  return kCPUArchitectureARM64;
+ #else
+ #error port to your architecture
+ #endif
+@@ -174,6 +176,9 @@ uint32_t SystemSnapshotMac::CPURevision() const {
+   uint8_t stepping = CastIntSysctlByName<uint8_t>("machdep.cpu.stepping", 0);
+ 
+   return (family << 16) | (model << 8) | stepping;
++#elif defined(__arm64__)
++  // TODO(zhuowei): implement
++  return 0;
+ #else
+ #error port to your architecture
+ #endif
+@@ -189,6 +194,10 @@ std::string SystemSnapshotMac::CPUVendor() const {
+ 
+ #if defined(ARCH_CPU_X86_FAMILY)
+   return ReadStringSysctlByName("machdep.cpu.vendor");
++#elif defined(__arm64__)
++  // TODO(zhuowei): implement
++  (void)&ReadStringSysctlByName;
++  return "Apple";
+ #else
+ #error port to your architecture
+ #endif
+diff --git a/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.cc b/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.cc
+index 8fbb3e70e539..b3f0ee2e67b8 100644
+--- a/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.cc
++++ b/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.cc
+@@ -75,6 +75,12 @@ bool ThreadSnapshotMac::Initialize(
+                             &process_reader_thread.float_context.f32,
+                             &process_reader_thread.debug_context.d32);
+   }
++#elif defined(__arm64__)
++  // TODO(zhuowei): implement
++  context_.architecture = kCPUArchitectureARM64;
++  context_.arm64 = &context_union_.arm64;
++#else
++#error Unsupported architecture
+ #endif
+ 
+   INITIALIZATION_STATE_SET_VALID(initialized_);
+diff --git a/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.h b/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.h
+index 946b0085c1a3..addb98fcbb8c 100644
+--- a/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.h
++++ b/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.h
+@@ -68,6 +68,12 @@ class ThreadSnapshotMac final : public ThreadSnapshot {
+     CPUContextX86 x86;
+     CPUContextX86_64 x86_64;
+   } context_union_;
++#elif defined(__arm64__)
++  union {
++    CPUContextARM64 arm64;
++  } context_union_;
++#else
++#error Unsupported architecture
+ #endif
+   CPUContext context_;
+   MemorySnapshotGeneric stack_;
+diff --git a/third_party/crashpad/crashpad/util/net/http_transport_mac.mm b/third_party/crashpad/crashpad/util/net/http_transport_mac.mm
+index a433bb357da5..b6cc29c98398 100644
+--- a/third_party/crashpad/crashpad/util/net/http_transport_mac.mm
++++ b/third_party/crashpad/crashpad/util/net/http_transport_mac.mm
+@@ -91,6 +91,9 @@
+     NSString* arch = @"i386";
+ #elif defined(ARCH_CPU_X86_64)
+     NSString* arch = @"x86_64";
++#elif defined(__arm64__)
++// TODO(zhuowei)
++    NSString* arch = @"arm64";
+ #else
+ #error Port
+ #endif
+diff --git a/third_party/zlib/BUILD.gn b/third_party/zlib/BUILD.gn
+index 64cddc7c4838..905024a2b214 100644
+--- a/third_party/zlib/BUILD.gn
++++ b/third_party/zlib/BUILD.gn
+@@ -84,7 +84,8 @@ if (use_arm_neon_optimizations) {
+     # Disabled for iPhone, as described in DDI0487C_a_armv8_arm:
+     #  "All implementations of the ARMv8.1 architecture are required to
+     #   implement the CRC32* instructions. These are optional in ARMv8.0."
+-    if (!is_ios) {
++    # TODO(zhuowei): this is not right for mac
++    if (!(is_ios || is_mac)) {
+       defines = [ "CRC32_ARMV8_CRC32" ]
+       if (is_android) {
+         defines += [ "ARMV8_OS_ANDROID" ]
+diff --git a/third_party/zlib/cpu_features.c b/third_party/zlib/cpu_features.c
+index 0c10a0024f44..872f0e6e1c08 100644
+--- a/third_party/zlib/cpu_features.c
++++ b/third_party/zlib/cpu_features.c
+@@ -46,7 +46,8 @@ int ZLIB_INTERNAL x86_cpu_enable_simd = 0;
+ #error cpu_features.c CPU feature detection in not defined for your platform
+ #endif
+ 
+-#if !defined(CPU_NO_SIMD) && !defined(ARM_OS_IOS)
++#if !defined(CPU_NO_SIMD) && !defined(ARM_OS_IOS) && !defined(__arm64__)
++// TODO(zhuowei): fixme - see BUILD.gn for the SIMD check
+ static void _cpu_check_features(void);
+ #endif
+ 
+@@ -76,6 +77,8 @@ void ZLIB_INTERNAL cpu_check_features(void)
+  * for crypto extensions.
+  */
+ #ifndef ARM_OS_IOS
++// TODO(zhuowei)
++#ifndef __arm64__
+ /*
+  * See http://bit.ly/2CcoEsr for run-time detection of ARM features and also
+  * crbug.com/931275 for android_getCpuFeatures() use in the Android sandbox.
+@@ -112,6 +115,7 @@ static void _cpu_check_features(void)
+ #endif
+ }
+ #endif
++#endif // TODO(zhuowei)
+ #elif defined(X86_NOT_WINDOWS) || defined(X86_WINDOWS)
+ /*
+  * iOS@x86 (i.e. emulator) is another special case where we disable
+-- 
+2.21.0 (Apple Git-122)
+
