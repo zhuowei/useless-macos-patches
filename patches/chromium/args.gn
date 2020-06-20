@@ -1,0 +1,22 @@
+is_debug = false
+# https://www.chromium.org/developers/gn-build-configuration
+# https://chromium.googlesource.com/chromium/src/+/0e94f26e8/docs/linux_faster_builds.md
+is_component_build = true
+enable_nacl = false
+symbol_level = 0
+target_cpu = "arm64"
+# https://source.chromium.org/chromium/chromium/src/+/master:build/config/mac/mac_sdk.gni;l=31;drc=cac24169142e7a243d004e8100cd8f24feebd6d7
+mac_sdk_path = "/Users/zhuowei/Documents/winprogress/earlymacarm/makesdk/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+# https://source.chromium.org/chromium/chromium/src/+/master:build/config/compiler/BUILD.gn;l=69;drc=1a429369beb9a49995118a5b2dba34b8a4f4a232
+fatal_linker_warnings = false
+# https://source.chromium.org/chromium/chromium/src/+/master:media/media_options.gni;l=51;drc=419f14db3e10099c13c8b6bea2ba2fdbd48fe874
+# also third_party/ffmpeg/README.chromium:
+# I'm not generating the ffmpeg config for macOS arm; that document's like 16 pages long
+media_use_ffmpeg = false
+# https://source.chromium.org/chromium/chromium/src/+/master:media/media_options.gni;l=93;drc=419f14db3e10099c13c8b6bea2ba2fdbd48fe874
+# bunch of
+# Undefined symbols for architecture arm64:
+#   "_dav1d_avg_16bpc_neon", referenced from:
+#       _dav1d_mc_dsp_init_arm_16bpc in libdav1d_10bit.a(mc_init_tmpl.o)
+# errors
+enable_dav1d_decoder = false
