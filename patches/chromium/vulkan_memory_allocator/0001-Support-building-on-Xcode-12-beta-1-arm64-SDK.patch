@@ -1,0 +1,36 @@
+From 2e6cf978817af81cb145548e6da8025e0560674b Mon Sep 17 00:00:00 2001
+From: Zhuowei Zhang <zhuoweizhang@yahoo.com>
+Date: Tue, 23 Jun 2020 20:47:01 -0400
+Subject: [PATCH] Support building on Xcode 12 beta 1 arm64 SDK
+
+---
+ src/vk_mem_alloc.h | 5 +++--
+ 1 file changed, 3 insertions(+), 2 deletions(-)
+
+diff --git a/src/vk_mem_alloc.h b/src/vk_mem_alloc.h
+index f30162f..c67fd53 100644
+--- a/src/vk_mem_alloc.h
++++ b/src/vk_mem_alloc.h
+@@ -3947,8 +3947,9 @@ void *aligned_alloc(size_t alignment, size_t size)
+     return memalign(alignment, size);
+ }
+ #elif defined(__APPLE__) || defined(__ANDROID__) || (defined(__linux__) && defined(__GLIBCXX__) && !defined(_GLIBCXX_HAVE_ALIGNED_ALLOC))
++// TODO(zhuowei): aligned_alloc is marked as unavailable since my build target is set too low
+ #include <cstdlib>
+-void *aligned_alloc(size_t alignment, size_t size)
++void *vk_my_aligned_alloc(size_t alignment, size_t size)
+ {
+     // alignment must be >= sizeof(void*)
+     if(alignment < sizeof(void*))
+@@ -3995,7 +3996,7 @@ void *aligned_alloc(size_t alignment, size_t size)
+    #if defined(_WIN32)
+        #define VMA_SYSTEM_ALIGNED_MALLOC(size, alignment)   (_aligned_malloc((size), (alignment)))
+    #else
+-       #define VMA_SYSTEM_ALIGNED_MALLOC(size, alignment)   (aligned_alloc((alignment), (size) ))
++       #define VMA_SYSTEM_ALIGNED_MALLOC(size, alignment)   (vk_my_aligned_alloc((alignment), (size) ))
+    #endif
+ #endif
+ 
+-- 
+2.24.3 (Apple Git-128)
+

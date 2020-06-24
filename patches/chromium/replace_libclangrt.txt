@@ -1,0 +1,2 @@
+zhuowei-mac:src zhuowei$ cp third_party/llvm-build/Release+Asserts/lib/clang/11.0.0/lib/darwin/libclang_rt.osx.a third_party/llvm-build/Release+Asserts/lib/clang/11.0.0/lib/darwin/libclang_rt.osx.a.backup
+zhuowei-mac:src zhuowei$ cp /Applications/Xcode.app/Contents/Developer/Toolchains/XcodeDefault.xctoolchain/usr/lib/clang/12.0.0/lib/darwin/libclang_rt.osx.a third_party/llvm-build/Release+Asserts/lib/clang/11.0.0/lib/darwin/libclang_rt.osx.a

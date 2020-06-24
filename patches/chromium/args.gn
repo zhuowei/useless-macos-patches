@@ -3,11 +3,13 @@ is_debug = false
 # https://chromium.googlesource.com/chromium/src/+/0e94f26e8/docs/linux_faster_builds.md
 is_component_build = true
 enable_nacl = false
-symbol_level = 0
+symbol_level = 1
+blink_symbol_level = 0
 target_cpu = "arm64"
-# https://source.chromium.org/chromium/chromium/src/+/master:build/config/mac/mac_sdk.gni;l=31;drc=cac24169142e7a243d004e8100cd8f24feebd6d7
-mac_sdk_path = "/Users/zhuowei/Documents/winprogress/earlymacarm/makesdk/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
+# speeds up the build, but loading pages may be slower
+use_v8_context_snapshot = false
 # https://source.chromium.org/chromium/chromium/src/+/master:build/config/compiler/BUILD.gn;l=69;drc=1a429369beb9a49995118a5b2dba34b8a4f4a232
+# Still needed since I'm using -mmacosx-version-min=10.10.0 and ld complains about libclang_rt being compiled for 11.0
 fatal_linker_warnings = false
 # https://source.chromium.org/chromium/chromium/src/+/master:media/media_options.gni;l=51;drc=419f14db3e10099c13c8b6bea2ba2fdbd48fe874
 # also third_party/ffmpeg/README.chromium:

@@ -1,19 +1,19 @@
-From f90f31f9ea68425dd937faa723796a9a04fcdbb5 Mon Sep 17 00:00:00 2001
+From b77e316c37e96a407621645879aaa6129f5597b1 Mon Sep 17 00:00:00 2001
 From: Zhuowei Zhang <zhuoweizhang@yahoo.com>
-Date: Sun, 14 Jun 2020 20:37:41 -0400
-Subject: [PATCH] Support building on the simulated arm64 SDK
+Date: Tue, 23 Jun 2020 16:19:14 -0400
+Subject: [PATCH] Support building on Xcode 12 beta 1 arm64 SDK
 
 ---
  base/mac/call_with_eh_frame.cc                |  3 +-
  base/mac/call_with_eh_frame_asm.S             |  5 ++
  base/process/process_metrics_mac.cc           |  3 ++
- base/profiler/native_unwinder_mac.cc          | 14 ++++++
+ base/profiler/native_unwinder_mac.cc          | 23 +++++++++
  base/profiler/register_context.h              | 22 ++++++++-
  .../suspendable_thread_delegate_mac.cc        | 48 ++++++++++++++++++-
  .../suspendable_thread_delegate_mac.h         | 13 +++++
  build/config/BUILDCONFIG.gn                   |  5 +-
  build/config/mac/BUILD.gn                     |  5 ++
- build/config/mac/mac_sdk.gni                  |  6 +++
+ build/mac/find_sdk.py                         |  2 +-
  build/toolchain/mac/BUILD.gn                  |  8 ++++
  .../audio/mac/coreaudio_dispatch_override.cc  |  5 ++
  sandbox/mac/sandbox_logging.cc                | 11 +++++
@@ -28,7 +28,7 @@ Subject: [PATCH] Support building on the simulated arm64 SDK
  .../crashpad/util/net/http_transport_mac.mm   |  3 ++
  third_party/zlib/BUILD.gn                     |  3 +-
  third_party/zlib/cpu_features.c               |  6 ++-
- 24 files changed, 217 insertions(+), 8 deletions(-)
+ 24 files changed, 221 insertions(+), 9 deletions(-)
 
 diff --git a/base/mac/call_with_eh_frame.cc b/base/mac/call_with_eh_frame.cc
 index 457854141940..5a680f11d210 100644
@@ -66,10 +66,10 @@ index 0e399cf2ae0b..be6fe3cbf21b 100644
 +
 +#endif // __arm64__ 
 diff --git a/base/process/process_metrics_mac.cc b/base/process/process_metrics_mac.cc
-index d0f35471cb79..cabd00885b15 100644
+index 33b10d8563f0..8efb4c107bbd 100644
 --- a/base/process/process_metrics_mac.cc
 +++ b/base/process/process_metrics_mac.cc
-@@ -295,7 +295,10 @@ bool GetSystemMemoryInfo(SystemMemoryInfoKB* meminfo) {
+@@ -300,7 +300,10 @@ bool GetSystemMemoryInfo(SystemMemoryInfoKB* meminfo) {
    }
    DCHECK_EQ(HOST_VM_INFO64_COUNT, count);
  
@@ -81,10 +81,43 @@ index d0f35471cb79..cabd00885b15 100644
        PAGE_SIZE / 1024 * (vm_info.free_count - vm_info.speculative_count));
    meminfo->speculative =
 diff --git a/base/profiler/native_unwinder_mac.cc b/base/profiler/native_unwinder_mac.cc
-index 51717e1b5f23..fc2b0a9bb111 100644
+index 51717e1b5f23..27afdc3a0b7d 100644
 --- a/base/profiler/native_unwinder_mac.cc
 +++ b/base/profiler/native_unwinder_mac.cc
-@@ -135,6 +135,7 @@ bool NativeUnwinderMac::CanUnwindFrom(const Frame& current_frame) const {
+@@ -15,9 +15,12 @@
+ #include "base/profiler/native_unwinder.h"
+ #include "base/profiler/profile_builder.h"
+ 
++#ifndef __arm64__
++// TODO(zhuowei): what's the new method?
+ extern "C" {
+ void _sigtramp(int, int, struct sigset*);
+ }
++#endif
+ 
+ namespace base {
+ 
+@@ -104,6 +107,7 @@ const ModuleCache::Module* GetLibSystemKernelModule(ModuleCache* module_cache) {
+ }
+ 
+ void GetSigtrampRange(uintptr_t* start, uintptr_t* end) {
++#ifndef __arm64__
+   auto address = reinterpret_cast<uintptr_t>(&_sigtramp);
+   DCHECK(address != 0);
+ 
+@@ -122,6 +126,11 @@ void GetSigtrampRange(uintptr_t* start, uintptr_t* end) {
+ 
+   DCHECK_EQ(info.start_ip, address);
+   *end = info.end_ip;
++#else
++  // TODO(zhuowei): implement
++  *start = 0;
++  *end = 0;
++#endif
+ }
+ 
+ }  // namespace
+@@ -135,6 +144,7 @@ bool NativeUnwinderMac::CanUnwindFrom(const Frame& current_frame) const {
    return current_frame.module && current_frame.module->IsNative();
  }
  
@@ -92,7 +125,7 @@ index 51717e1b5f23..fc2b0a9bb111 100644
  UnwindResult NativeUnwinderMac::TryUnwind(x86_thread_state64_t* thread_context,
                                            uintptr_t stack_top,
                                            ModuleCache* module_cache,
-@@ -201,6 +202,19 @@ UnwindResult NativeUnwinderMac::TryUnwind(x86_thread_state64_t* thread_context,
+@@ -201,6 +211,19 @@ UnwindResult NativeUnwinderMac::TryUnwind(x86_thread_state64_t* thread_context,
    NOTREACHED();
    return UnwindResult::COMPLETED;
  }
@@ -313,20 +346,19 @@ index de8233bba4a1..40869331db09 100644
    }
  
    # This is here so that all files get recompiled after an Xcode update.
-diff --git a/build/config/mac/mac_sdk.gni b/build/config/mac/mac_sdk.gni
-index c43c00ddaf02..d8577558dcfb 100644
---- a/build/config/mac/mac_sdk.gni
-+++ b/build/config/mac/mac_sdk.gni
-@@ -123,3 +123,9 @@ if (use_system_xcode) {
-   # TODO(thakis): Do this at the uses of this variable instead.
-   mac_bin_path = rebase_path(mac_bin_path, root_build_dir)
- }
-+
-+if (current_cpu == "x64") {
-+  # TODO(zhuowei): kludge: always use the stock macOS sdk for host builds
-+  # This won't be needed with a real macOS ARM SDK.
-+  mac_sdk_path = "/Applications/Xcode.app/Contents/Developer/Platforms/MacOSX.platform/Developer/SDKs/MacOSX.sdk"
-+} 
+diff --git a/build/mac/find_sdk.py b/build/mac/find_sdk.py
+index 51ffc14478cb..a387e20f2ed7 100755
+--- a/build/mac/find_sdk.py
++++ b/build/mac/find_sdk.py
+@@ -72,7 +72,7 @@ def main():
+     raise SdkError('Install Xcode, launch it, accept the license ' +
+       'agreement, and run `sudo xcode-select -s /path/to/Xcode.app` ' +
+       'to continue.')
+-  sdks = [re.findall('^MacOSX(10\.\d+)\.sdk$', s) for s in os.listdir(sdk_dir)]
++  sdks = [re.findall('^MacOSX(1\d\.\d+)\.sdk$', s) for s in os.listdir(sdk_dir)]
+   sdks = [s[0] for s in sdks if s]  # [['10.5'], ['10.6']] => ['10.5', '10.6']
+   sdks = [s for s in sdks  # ['10.5', '10.6'] => ['10.6']
+           if parse_version(s) >= parse_version(min_sdk_version)]
 diff --git a/build/toolchain/mac/BUILD.gn b/build/toolchain/mac/BUILD.gn
 index add57c71bbe3..1236c0178190 100644
 --- a/build/toolchain/mac/BUILD.gn
@@ -394,10 +426,10 @@ index 4eebcea13d17..8b6f26e6b92b 100644
  extern "C" {
  void abort_report_np(const char*, ...);
 diff --git a/third_party/crashpad/crashpad/client/simulate_crash_mac.cc b/third_party/crashpad/crashpad/client/simulate_crash_mac.cc
-index 43d05b815598..c3cebb90f0b5 100644
+index 8d6e8bd9286f..3a812455fdf7 100644
 --- a/third_party/crashpad/crashpad/client/simulate_crash_mac.cc
 +++ b/third_party/crashpad/crashpad/client/simulate_crash_mac.cc
-@@ -94,6 +94,12 @@ bool DeliverException(thread_t thread,
+@@ -95,6 +95,12 @@ bool DeliverException(thread_t thread,
        state_count = cpu_context.tsh.count;
        break;
  #endif
@@ -534,7 +566,7 @@ index 5410be085ea8..970ba09c01ea 100644
  #error port to your architecture
  #endif
 diff --git a/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.cc b/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.cc
-index 8fbb3e70e539..b3f0ee2e67b8 100644
+index ddb4def45142..de7218e2f548 100644
 --- a/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.cc
 +++ b/third_party/crashpad/crashpad/snapshot/mac/thread_snapshot_mac.cc
 @@ -75,6 +75,12 @@ bool ThreadSnapshotMac::Initialize(
@@ -627,5 +659,5 @@ index 0c10a0024f44..872f0e6e1c08 100644
  /*
   * iOS@x86 (i.e. emulator) is another special case where we disable
 -- 
-2.21.0 (Apple Git-122)
+2.24.3 (Apple Git-128)
 
